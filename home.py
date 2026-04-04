@@ -1,99 +1,121 @@
 import streamlit as st
 import google.generativeai as genai
 import PyPDF2
-import os
+from PIL import Image
 
-# --- PAGE CONFIGURATION ---
-st.set_page_config(
-    page_title="AI PDF Professor | Nepal",
-    page_icon="🎓",
-    layout="centered"
-)
+# --- PAGE CONFIG ---
+st.set_page_config(page_title="AI Study Master", page_icon="📝", layout="centered")
 
 # --- 1. SECURE API SETUP ---
 def configure_api():
     try:
-        # Streamlit Secrets bata API Key tanne
-        api_key = st.secrets["API_KEY"]
-        genai.configure(api_key=api_key)
+        # Check Streamlit Secrets
+        if "API_KEY" not in st.secrets:
+            st.error("Error: 'API_KEY' not found in Secrets! Please add it to secrets.toml or Cloud settings.")
+            return None
         
-        # Best model automatically select garne logic
+        genai.configure(api_key=st.secrets["API_KEY"])
+        
+        # Model Selection Logic
         try:
             model = genai.GenerativeModel('gemini-1.5-flash')
-            # Test run to check if model exists
-            model.generate_content("test") 
             return model
         except Exception:
-            # Yadi flash bhetena bhane available model khojne
             for m in genai.list_models():
                 if 'generateContent' in m.supported_generation_methods:
                     return genai.GenerativeModel(m.name)
     except Exception as e:
-        st.error("API Key Configuration Error! Check your Secrets.toml or Streamlit Cloud Secrets.")
+        st.error(f"Configuration Error: {e}")
         return None
 
 model = configure_api()
 
-# --- 2. PDF PROCESSING FUNCTION ---
-def extract_text_from_pdf(file):
-    try:
-        pdf_reader = PyPDF2.PdfReader(file)
-        combined_text = ""
-        for page in pdf_reader.pages:
-            content = page.extract_text()
-            if content:
-                combined_text += content
-        return combined_text
-    except Exception as e:
-        st.error(f"PDF read garna sakiyena: {e}")
-        return ""
+# --- 2. HELPERS ---
+def extract_pdf_text(file):
+    pdf_reader = PyPDF2.PdfReader(file)
+    text = ""
+    for page in pdf_reader.pages:
+        content = page.extract_text()
+        if content: text += content
+    return text
 
-# --- 3. USER INTERFACE (UI) ---
-st.title("🎓 Smart PDF Professor")
-st.markdown("### Technical Notes lai Simple Bhasa ma Bujhnuhos")
+# --- 3. UI DESIGN ---
+st.title("📝 AI Study Master (Nepal)")
+st.subheader("PDF ya Image upload garnuhos ra simple bhasa ma bujhnuhos!")
 st.divider()
 
-# File Uploader
-uploaded_file = st.file_uploader("Aafno College ko PDF (Notes) Upload garnuhos", type="pdf")
+# File Uploader for both PDF and Images
+uploaded_file = st.file_uploader("File chhannuhos (PDF, JPG, PNG)", type=["pdf", "jpg", "jpeg", "png"])
 
 if uploaded_file is not None:
-    with st.status("Processing your PDF...", expanded=True) as status:
-        st.write("Reading text from PDF...")
-        text_content = extract_text_from_pdf(uploaded_file)
-        
-        if text_content:
-            st.write("Text extracted successfully!")
-            status.update(label="PDF Ready!", state="complete", expanded=False)
-            
-            # Options for the user
-            option = st.radio(
-                "AI le k garos?",
-                ["Summary (Important Points)", "Explain Simply (Easy Language)", "Generate Exam Questions"],
-                index=1
-            )
+    file_type = uploaded_file.type
+    content_ready = False
+    ai_input = None
 
-            if st.button("AI lai Kaam Lagau 🚀"):
-                if model:
-                    # PROMPT ENGINEERING
-                    if option == "Summary (Important Points)":
-                        user_prompt = f"Summarize the following text in clear bullet points focusing on main concepts:\n\n{text_content[:15000]}"
-                    elif option == "Explain Simply (Easy Language)":
-                        user_prompt = f"Explain this technical text in very simple words as if teaching a beginner. Use a mix of English and Nepali (Hinglish). Use real-life analogies:\n\n{text_content[:15000]}"
-                    else:
-                        user_prompt = f"Create 5 important exam questions and their short answers based on this text:\n\n{text_content[:15000]}"
+    # Processing PDF
+    if "pdf" in file_type:
+        with st.status("Reading PDF..."):
+            extracted_text = extract_pdf_text(uploaded_file)
+            if extracted_text:
+                ai_input = f"CONTEXT FROM PDF:\n{extracted_text[:15000]}"
+                content_ready = True
+                st.success("PDF processed!")
 
-                    with st.spinner("AI is thinking..."):
-                        try:
-                            response = model.generate_content(user_prompt)
-                            st.subheader("💡 AI Professor says:")
-                            st.markdown(response.text)
-                        except Exception as e:
-                            st.error(f"AI Generation Error: {e}")
-                else:
-                    st.error("Model initialize bhayena. API Key check garnuhos.")
-        else:
-            st.error("PDF bata text nikaalna sakiyena. File check garnuhos.")
+    # Processing Image
+    else:
+        img = Image.open(uploaded_file)
+        st.image(img, caption="Uploaded Image", use_container_width=True)
+        ai_input = [
+            "Explain the content of this image in very simple language. If there is text, summarize it. Use Hinglish.",
+            img
+        ]
+        content_ready = True
 
-# --- FOOTER ---
+    if content_ready:
+        st.divider()
+        task = st.radio("K garna chahanchhunu hunchha?", 
+                        ["Simple Explanation (Hinglish)", "Short Summary", "Exam Questions (QA)"])
+
+        if st.button("Analyze with AI 🚀"):
+            if model:
+                with st.spinner("AI le sochdai chha..."):
+                    try:
+                        # Define final prompt based on task
+                        if task == "Simple Explanation (Hinglish)":
+                            prompt_prefix = "Explain this very simply like a friendly teacher using English and Nepali mix (Hinglish). Use analogies: "
+                        elif task == "Short Summary":
+                            prompt_prefix = "Provide a very short bullet-point summary of this: "
+                        else:
+                            prompt_prefix = "Generate 5 important exam questions and answers from this: "
+
+                        # If it's a PDF (Text only)
+                        if isinstance(ai_input, str):
+                            response = model.generate_content(prompt_prefix + ai_input)
+                        # If it's an Image (Multimodal)
+                        else:
+                            response = model.generate_content([prompt_prefix + ai_input[0], ai_input[1]])
+                        
+                        st.markdown("### 💡 AI Output:")
+                        st.write(response.text)
+                    except Exception as e:
+                        st.error(f"AI Error: {e}")
+            else:
+                st.error("API Model not ready. Key check garnuhos.")
+
 st.divider()
-st.caption("Developed by a Computer Engineering Student | Powered by Gemini AI")
+st.caption("Developed for Computer Engineering Students | 2026")
+# --- 3. UI DESIGN (Top Section with Developed By) ---
+# Column 1 le 3 bhag ra Column 2 le 1 bhag space lincha (Total 4)
+col1, col2 = st.columns([3, 1])
+
+with col1:
+    st.title("📝 AI Study Master")
+
+with col2:
+    # Right side ma padding thapera text lai mathi milaune
+    st.markdown("<br>", unsafe_allow_html=True) # Sano space ko lagi
+    st.write(f"**Developed by:** \n [KmrazKhan]") 
+    st.caption("Computer Engineering")
+
+st.subheader("PDF ya Image upload garnuhos ra simple bhasa ma bujhnuhos!")
+st.divider()
