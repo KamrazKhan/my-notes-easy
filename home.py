@@ -1,63 +1,99 @@
 import streamlit as st
 import google.generativeai as genai
 import PyPDF2
+import os
 
-# --- SECURE API SETUP ---
-# Code ma key narakhnu, Secrets bata tanne
-try:
-    genai.configure(api_key=st.secrets["API_KEY"])
-except Exception as e:
-    st.error("API Key bhetena! Please check your Secrets settings.")
+# --- PAGE CONFIGURATION ---
+st.set_page_config(
+    page_title="AI PDF Professor | Nepal",
+    page_icon="🎓",
+    layout="centered"
+)
 
-st.set_page_config(page_title="AI PDF Professor", page_icon="🎓", layout="wide")
-
-st.title("🎓 Smart PDF Professor")
-st.write("Aafno College ko PDF notes haru lai simple language ma bujhnuhos.")
-
-# PDF text nikaalne function
-def get_pdf_text(pdf_docs):
-    text = ""
-    pdf_reader = PyPDF2.PdfReader(pdf_docs)
-    for page in pdf_reader.pages:
-        text += page.extract_text()
-    return text
-
-# UI Layout
-with st.sidebar:
-    st.header("Settings")
-    uploaded_file = st.file_uploader("PDF Upload Garnuhos", type="pdf")
-    
-if uploaded_file:
-    # 1. Text extract garne
-    raw_text = get_pdf_text(uploaded_file)
-    
-    # 2. Options selection
-    st.info("PDF read vayo! Aba k garna chahanchhunu hunchha?")
-    task = st.selectbox("Action chhannuhos:", 
-                        ["Summary (Main Points)", 
-                         "Explain Simply (Saral Bhasa)", 
-                         "Generate 5 Questions (Exam Prep)"])
-
-    if st.button("Start AI Process 🚀"):
+# --- 1. SECURE API SETUP ---
+def configure_api():
+    try:
+        # Streamlit Secrets bata API Key tanne
+        api_key = st.secrets["API_KEY"]
+        genai.configure(api_key=api_key)
+        
+        # Best model automatically select garne logic
         try:
             model = genai.GenerativeModel('gemini-1.5-flash')
-            
-            # --- IMPROVED PROMPT ENGINEERING ---
-            if task == "Summary (Main Points)":
-                prompt = f"Read this text and provide a high-level summary. Use bullet points for key concepts: \n\n {raw_text[:10000]}"
-            
-            elif task == "Explain Simply (Saral Bhasa)":
-                prompt = f"Explain the core concepts of this text in very simple language. Use analogies and avoid technical jargon. Use a mix of English and Nepali (Hinglish) for better understanding. Explain like I am 12 years old: \n\n {raw_text[:10000]}"
-            
-            else:
-                prompt = f"Based on this text, generate 5 important exam questions with short answers: \n\n {raw_text[:10000]}"
+            # Test run to check if model exists
+            model.generate_content("test") 
+            return model
+        except Exception:
+            # Yadi flash bhetena bhane available model khojne
+            for m in genai.list_models():
+                if 'generateContent' in m.supported_generation_methods:
+                    return genai.GenerativeModel(m.name)
+    except Exception as e:
+        st.error("API Key Configuration Error! Check your Secrets.toml or Streamlit Cloud Secrets.")
+        return None
 
-            with st.spinner("AI le analyze gardai chha..."):
-                response = model.generate_content(prompt)
-                st.subheader("AI Result:")
-                st.markdown(response.text)
-                
-        except Exception as e:
-            st.error(f"Something went wrong: {e}")
-else:
-    st.warning("Paila side bata PDF upload garnuhos.")
+model = configure_api()
+
+# --- 2. PDF PROCESSING FUNCTION ---
+def extract_text_from_pdf(file):
+    try:
+        pdf_reader = PyPDF2.PdfReader(file)
+        combined_text = ""
+        for page in pdf_reader.pages:
+            content = page.extract_text()
+            if content:
+                combined_text += content
+        return combined_text
+    except Exception as e:
+        st.error(f"PDF read garna sakiyena: {e}")
+        return ""
+
+# --- 3. USER INTERFACE (UI) ---
+st.title("🎓 Smart PDF Professor")
+st.markdown("### Technical Notes lai Simple Bhasa ma Bujhnuhos")
+st.divider()
+
+# File Uploader
+uploaded_file = st.file_uploader("Aafno College ko PDF (Notes) Upload garnuhos", type="pdf")
+
+if uploaded_file is not None:
+    with st.status("Processing your PDF...", expanded=True) as status:
+        st.write("Reading text from PDF...")
+        text_content = extract_text_from_pdf(uploaded_file)
+        
+        if text_content:
+            st.write("Text extracted successfully!")
+            status.update(label="PDF Ready!", state="complete", expanded=False)
+            
+            # Options for the user
+            option = st.radio(
+                "AI le k garos?",
+                ["Summary (Important Points)", "Explain Simply (Easy Language)", "Generate Exam Questions"],
+                index=1
+            )
+
+            if st.button("AI lai Kaam Lagau 🚀"):
+                if model:
+                    # PROMPT ENGINEERING
+                    if option == "Summary (Important Points)":
+                        user_prompt = f"Summarize the following text in clear bullet points focusing on main concepts:\n\n{text_content[:15000]}"
+                    elif option == "Explain Simply (Easy Language)":
+                        user_prompt = f"Explain this technical text in very simple words as if teaching a beginner. Use a mix of English and Nepali (Hinglish). Use real-life analogies:\n\n{text_content[:15000]}"
+                    else:
+                        user_prompt = f"Create 5 important exam questions and their short answers based on this text:\n\n{text_content[:15000]}"
+
+                    with st.spinner("AI is thinking..."):
+                        try:
+                            response = model.generate_content(user_prompt)
+                            st.subheader("💡 AI Professor says:")
+                            st.markdown(response.text)
+                        except Exception as e:
+                            st.error(f"AI Generation Error: {e}")
+                else:
+                    st.error("Model initialize bhayena. API Key check garnuhos.")
+        else:
+            st.error("PDF bata text nikaalna sakiyena. File check garnuhos.")
+
+# --- FOOTER ---
+st.divider()
+st.caption("Developed by a Computer Engineering Student | Powered by Gemini AI")
